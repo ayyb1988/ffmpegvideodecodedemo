@@ -1,0 +1,4 @@
+include ':mylibrary2'
+include ':app:mylibrary'
+include ':app'
+rootProject.name = "ffmpegdemo2"
