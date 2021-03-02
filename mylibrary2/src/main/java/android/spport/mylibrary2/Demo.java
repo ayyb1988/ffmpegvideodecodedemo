@@ -19,6 +19,8 @@ public class Demo {
      */
     public native String stringFromJNI();
     public native int decodeVideo(String inputPath,String outPath);
-    public native int decodeVideo2(String inputPath,String outPath);
+//    public native int decodeVideo2(String inputPath,String outPath);
+
+    public native int decodeAudio(String videoPath,String pcmPath);
 
 }

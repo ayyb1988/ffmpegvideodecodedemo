@@ -32,8 +32,10 @@ public class MainActivity extends AppCompatActivity {
         File externalFilesDir = getExternalFilesDir(null);
         Log.i("MainActivity", "externalFilesDir: "+externalFilesDir);
 
-        demo.decodeVideo(folderurl+"/input.mp4", externalFilesDir+"/output7.yuv");
-        demo.decodeVideo2(folderurl+"/input.mp4", externalFilesDir+"/output8.yuv");
+//        demo.decodeVideo(folderurl+"/input.mp4", externalFilesDir+"/output7.yuv");
+//        demo.decodeVideo2(folderurl+"/input.mp4", externalFilesDir+"/output8.yuv");
+        demo.decodeAudio(folderurl+"/input.mp4", externalFilesDir+"/audio.pcm");
+
     }
 
     private void checkPermission() {
