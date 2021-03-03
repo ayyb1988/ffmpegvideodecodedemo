@@ -13,8 +13,8 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 
-public class AudioTrackHelper {
-    private static final String TAG = "AudioTrackHelper";
+public class AudioTrackStaticModeHelper {
+    private static final String TAG = "AudioTrackStaticModeHelper";
     private AudioTrack audioTrack;
     private int sampleRateInHz;
     private int channels;
@@ -30,24 +30,24 @@ public class AudioTrackHelper {
 
     private Context context;
 
-    public AudioTrackHelper(Context context) {
+    public AudioTrackStaticModeHelper(Context context) {
         this.context = context;
     }
 
 
-    public void initAudioTrackParams() {
+    public void initAudioTrackParams(String path) {
         sampleRateInHz = 44100;
-        channels = AudioFormat.CHANNEL_OUT_MONO;//错误的写成了CHANNEL_IN_MONO
+        channels = AudioFormat.CHANNEL_OUT_STEREO;
         audioFormat = AudioFormat.ENCODING_PCM_16BIT;
         bufferSize = AudioTrack.getMinBufferSize(sampleRateInHz, channels, audioFormat);
 
-        pcmFile = new File(context.getExternalFilesDir(Environment.DIRECTORY_MUSIC), "raw.pcm");
+        pcmFile = new File(path);
         if (pcmFile.exists()) {
             hasPcmFile = true;
         }
     }
 
-    public boolean isHasPcmFile(){
+    public boolean isHasPcmFile() {
         return hasPcmFile;
     }
 
@@ -123,6 +123,11 @@ public class AudioTrackHelper {
 
                     isReadying = true;
 
+                    play();
+//                    if (audioTrackStateChangeListener != null) {
+//                        audioTrackStateChangeListener.onPrepread();
+//                    }
+
                 } catch (IOException e) {
                     e.printStackTrace();
                 } catch (Throwable e) {
@@ -170,7 +175,7 @@ public class AudioTrackHelper {
         //4. 把pcm写入audioTrack，然后进行播放
         long startTime = System.currentTimeMillis();
         int result = audioTrack.write(staicBuff, 0, staicBuff.length);
-        Log.d(TAG, "audioTrack.write staic: result=" + result+" totaltime="+ (System.currentTimeMillis() - startTime));
+        Log.d(TAG, "audioTrack.write staic: result=" + result + " totaltime=" + (System.currentTimeMillis() - startTime));
         audioTrack.play();
         isPlaying = true;
     }
@@ -203,6 +208,7 @@ public class AudioTrackHelper {
     }
 
     public void destroy() {
+//        releaseAudioTrack();
         if (audioTrack != null) {
             audioTrack.release();
             audioTrack = null;
@@ -213,5 +219,13 @@ public class AudioTrackHelper {
         }
     }
 
+    private AudioTrackStateChangeListener audioTrackStateChangeListener;
 
+    public interface AudioTrackStateChangeListener {
+        void onPrepread();
+    }
+
+    public void setAudioTrackStateChangeListener(AudioTrackStateChangeListener audioTrackStateChangeListener) {
+        this.audioTrackStateChangeListener = audioTrackStateChangeListener;
+    }
 }
