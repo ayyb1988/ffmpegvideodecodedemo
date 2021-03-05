@@ -10,9 +10,11 @@ extern "C" {
 #include <libswscale/swscale.h>
 #include <libavutil/imgutils.h>
 #include <libswresample/swresample.h>
-
+#include <SLES/OpenSLES.h>
+#include <SLES/OpenSLES_Android.h>
 }
 
+jint playPcmBySL(JNIEnv *env,  jstring pcm_path);
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_android_spport_mylibrary2_Demo_stringFromJNI(
@@ -340,15 +342,15 @@ Java_android_spport_mylibrary2_Demo_decodeAudio(JNIEnv *env, jobject thiz, jstri
                 // 第一次显示
                 static bool show = true;
                 if (show) {
-                    LOGE("numBytes pFrame->nb_samples=%d dstNbSamples=%d,numBytes=%d,pCodecContext->sample_rate=%d,outSampleRate=%d", pFrame->nb_samples,
-                         dstNbSamples,numBytes,pCodecContext->sample_rate,outSampleRate);
+                    LOGE("numBytes pFrame->nb_samples=%d dstNbSamples=%d,numBytes=%d,pCodecContext->sample_rate=%d,outSampleRate=%d",
+                         pFrame->nb_samples,
+                         dstNbSamples, numBytes, pCodecContext->sample_rate, outSampleRate);
                     show = false;
                 }
                 // 使用LRLRLRLRLRL（采样点为单位，采样点有几个字节，交替存储到文件，可使用pcm播放器播放）
                 for (int index = 0; index < dstNbSamples; index++) {
                     // // 交错的方式写入, 大部分float的格式输出 符合LRLRLRLR点交错模式
-                    for (int channel = 0;channel < pCodecContext->channels; channel++)
-                    {
+                    for (int channel = 0; channel < pCodecContext->channels; channel++) {
                         fwrite((char *) outData[channel] + numBytes * index, 1, numBytes, pcmFile);
                     }
                 }
@@ -367,6 +369,8 @@ Java_android_spport_mylibrary2_Demo_decodeAudio(JNIEnv *env, jobject thiz, jstri
     env->ReleaseStringUTFChars(video_path, url);
 
     env->ReleaseStringUTFChars(pcm_path, pcmPathStr);
+
+    playPcmBySL(env,pcm_path);
 
     return 0;
 }
@@ -570,4 +574,205 @@ Java_android_spport_mylibrary2_Demo_decodeVideo2
 
     return 0;
 }
+
+// engine interfaces
+static SLObjectItf engineObject = NULL;
+static SLEngineItf engineEngine;
+
+// output mix interfaces
+static SLObjectItf outputMixObject = NULL;
+static SLEnvironmentalReverbItf outputMixEnvironmentalReverb = NULL;
+
+static SLObjectItf pcmPlayerObject = NULL;
+static SLPlayItf pcmPlayerPlay;
+static SLAndroidSimpleBufferQueueItf pcmBufferQueue;
+
+FILE *pcmFile;
+void *buffer;
+uint8_t *out_buffer;
+
+jint playPcmBySL(JNIEnv *env, const _jstring *pcm_path);
+
+// aux effect on the output mix, used by the buffer queue player
+static const SLEnvironmentalReverbSettings reverbSettings = SL_I3DL2_ENVIRONMENT_PRESET_STONECORRIDOR;
+
+
+void playerCallback(SLAndroidSimpleBufferQueueItf bufferQueueItf, void *context) {
+
+
+    if (bufferQueueItf != pcmBufferQueue) {
+        LOGE("SLAndroidSimpleBufferQueueItf is not equal");
+        return;
+    }
+
+    while (!feof(pcmFile)) {
+        size_t size = fread(out_buffer, 44100 * 2 * 2, 1, pcmFile);
+        if (out_buffer == NULL || size == 0) {
+            LOGI("read end %ld", size);
+            break;
+        } else {
+            LOGI("reading %ld", size);
+        }
+        buffer = out_buffer;
+        break;
+    }
+    if (buffer != NULL) {
+        LOGI("buffer is not null");
+        SLresult result = (*pcmBufferQueue)->Enqueue(pcmBufferQueue, buffer, 44100 * 2 * 2);
+        if (SL_RESULT_SUCCESS != result) {
+            LOGE("pcmBufferQueue error %d",result);
+        }
+    }
+
+}
+
+
+
+jint playPcmBySL(JNIEnv *env,  jstring pcm_path) {
+    const char *pcmPath = env->GetStringUTFChars(pcm_path, NULL);
+    pcmFile = fopen(pcmPath, "r");
+    if (pcmFile == NULL) {
+        LOGE("open pcmfile error");
+        return -1;
+    }
+    out_buffer = (uint8_t *) malloc(44100 * 2 * 2);
+
+    //1. 创建引擎`
+//    SLresult result;
+//1.1 创建引擎对象
+    SLresult result = slCreateEngine(&engineObject, 0, 0, 0, 0, 0);
+    if (SL_RESULT_SUCCESS != result) {
+        LOGE("slCreateEngine error %d", result);
+        return -1;
+    }
+    //1.2 实例化引擎
+    result = (*engineObject)->Realize(engineObject, SL_BOOLEAN_FALSE);
+    if (SL_RESULT_SUCCESS != result) {
+        LOGE("Realize engineObject error");
+        return -1;
+    }
+    //1.3获取引擎接口SLEngineItf
+    result = (*engineObject)->GetInterface(engineObject, SL_IID_ENGINE, &engineEngine);
+    if (SL_RESULT_SUCCESS != result) {
+        LOGE("GetInterface SLEngineItf error");
+        return -1;
+    }
+    slCreateEngine(&engineObject, 0, 0, 0, 0, 0);
+    (*engineObject)->Realize(engineObject, SL_BOOLEAN_FALSE);
+    (*engineObject)->GetInterface(engineObject, SL_IID_ENGINE, &engineEngine);
+
+    //获取到SLEngineItf接口后，后续的混音器和播放器的创建都会使用它
+
+    //2. 创建输出混音器
+
+    const SLInterfaceID ids[1] = {SL_IID_ENVIRONMENTALREVERB};
+    const SLboolean req[1] = {SL_BOOLEAN_FALSE};
+
+    //2.1 创建混音器对象
+    result = (*engineEngine)->CreateOutputMix(engineEngine, &outputMixObject, 1, ids, req);
+    if (SL_RESULT_SUCCESS != result) {
+        LOGE("CreateOutputMix  error");
+        return -1;
+    }
+    //2.2 实例化混音器
+    result = (*outputMixObject)->Realize(outputMixObject, SL_BOOLEAN_FALSE);
+    if (SL_RESULT_SUCCESS != result) {
+        LOGE("outputMixObject Realize error");
+        return -1;
+    }
+    //2.3 获取混音接口 SLEnvironmentalReverbItf
+    result = (*outputMixObject)->GetInterface(outputMixObject, SL_IID_ENVIRONMENTALREVERB,
+                                           &outputMixEnvironmentalReverb);
+    if (SL_RESULT_SUCCESS == result) {
+        result = (*outputMixEnvironmentalReverb)->SetEnvironmentalReverbProperties(
+                outputMixEnvironmentalReverb, &reverbSettings);
+    }
+
+
+    //3 设置输入输出数据源
+//setSLData();
+//3.1 设置输入 SLDataSource
+    SLDataLocator_AndroidSimpleBufferQueue loc_bufq = {SL_DATALOCATOR_ANDROIDSIMPLEBUFFERQUEUE,2};
+
+    SLDataFormat_PCM formatPcm = {
+            SL_DATAFORMAT_PCM,//播放pcm格式的数据
+            2,//2个声道（立体声）
+            SL_SAMPLINGRATE_44_1,//44100hz的频率
+            SL_PCMSAMPLEFORMAT_FIXED_16,//位数 16位
+            SL_PCMSAMPLEFORMAT_FIXED_16,//和位数一致就行
+            SL_SPEAKER_FRONT_LEFT | SL_SPEAKER_FRONT_RIGHT,//立体声（前左前右）
+            SL_BYTEORDER_LITTLEENDIAN//结束标志
+    };
+
+    SLDataSource slDataSource = {&loc_bufq, &formatPcm};
+
+    //3.2 设置输出 SLDataSink
+    SLDataLocator_OutputMix loc_outmix = {SL_DATALOCATOR_OUTPUTMIX, outputMixObject};
+    SLDataSink audioSnk = {&loc_outmix, NULL};
+
+
+    //4.创建音频播放器
+
+    //4.1 创建音频播放器对象
+
+    const SLInterfaceID ids2[1] = {SL_IID_BUFFERQUEUE};
+    const SLboolean req2[1] = {SL_BOOLEAN_TRUE};
+
+    result = (*engineEngine)->CreateAudioPlayer(engineEngine, &pcmPlayerObject, &slDataSource, &audioSnk,
+                                                1, ids2, req2);
+    if (SL_RESULT_SUCCESS != result) {
+        LOGE(" CreateAudioPlayer error");
+        return -1;
+    }
+
+    //4.2 实例化音频播放器对象
+    result = (*pcmPlayerObject)->Realize(pcmPlayerObject, SL_BOOLEAN_FALSE);
+    if (SL_RESULT_SUCCESS != result) {
+        LOGE(" pcmPlayerObject Realize error");
+        return -1;
+    }
+    //4.3 获取音频播放器接口
+    result = (*pcmPlayerObject)->GetInterface(pcmPlayerObject, SL_IID_PLAY, &pcmPlayerPlay);
+    if (SL_RESULT_SUCCESS != result) {
+        LOGE(" SLPlayItf GetInterface error");
+        return -1;
+    }
+
+    //5. 注册播放器buffer回调 RegisterCallback
+
+    //5.1  获取音频播放的buffer接口 SLAndroidSimpleBufferQueueItf
+    result = (*pcmPlayerObject)->GetInterface(pcmPlayerObject, SL_IID_BUFFERQUEUE, &pcmBufferQueue);
+    if (SL_RESULT_SUCCESS != result) {
+        LOGE(" SLAndroidSimpleBufferQueueItf GetInterface error");
+        return -1;
+    }
+    //5.2 注册回调 RegisterCallback
+    result = (*pcmBufferQueue)->RegisterCallback(pcmBufferQueue, playerCallback, NULL);
+    if (SL_RESULT_SUCCESS != result) {
+        LOGE(" SLAndroidSimpleBufferQueueItf RegisterCallback error");
+        return -1;
+    }
+
+    //6. 设置播放状态为Playing
+    result = (*pcmPlayerPlay)->SetPlayState(pcmPlayerPlay, SL_PLAYSTATE_PLAYING);
+    if (SL_RESULT_SUCCESS != result) {
+        LOGE(" SetPlayState  error");
+        return -1;
+    }
+
+    //7.触发回调
+    playerCallback(pcmBufferQueue,NULL);
+
+    return 0;
+}
+
+extern "C"
+JNIEXPORT jint JNICALL
+Java_android_spport_mylibrary2_Demo_playAudioByOpenSLES(JNIEnv *env, jobject thiz,
+                                                        jstring pcm_path) {
+    return playPcmBySL(env, pcm_path);
+
+
+}
+
 

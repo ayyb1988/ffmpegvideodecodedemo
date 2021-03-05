@@ -23,4 +23,7 @@ public class Demo {
 
     public native int decodeAudio(String videoPath,String pcmPath);
 
+    public native int playAudioByOpenSLES(String pcmPath);
+
+
 }

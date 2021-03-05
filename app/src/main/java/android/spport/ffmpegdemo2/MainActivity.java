@@ -42,7 +42,7 @@ public class MainActivity extends AppCompatActivity {
 
 
 //        initAudioTrackStaticMode(externalFilesDir);
-        initAudioTrackStreamMode(externalFilesDir);
+//        initAudioTrackStreamMode(externalFilesDir);
 
     }
 
